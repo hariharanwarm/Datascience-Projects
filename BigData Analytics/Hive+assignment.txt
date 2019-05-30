@@ -1,0 +1,388 @@
+--Setup environment
+ADD JAR /opt/cloudera/parcels/CDH/lib/hive/lib/hive-hcatalog-core-1.1.0-cdh5.11.2.jar;
+SET hive.exec.max.dynamic.partitions=100000;
+SET hive.exec.max.dynamic.partitions.pernode=100000;
+
+--**********************Exploratory Data analysis**************************
+--column names used are 
+--VendorID int,tpep_pickup_datetime string,tpep_dropoff_datetime string,passenger_count int,trip_distance double,RatecodeID int,
+--store_and_fwd_flag string,PULocationID int,DOLocationID int,payment_type int,fare_amount double,extra double,mta_tax double,
+--tip_amount int,tolls_amount int,improvement_surcharge double,total_amount double 
+
+--Create a table with raw data
+
+drop table taxi_data;
+
+create external table if not exists taxi_data(VendorID int,tpep_pickup_datetime string,tpep_dropoff_datetime string,
+passenger_count int,trip_distance double,RatecodeID int,
+store_and_fwd_flag string,PULocationID int,DOLocationID int,payment_type int,
+fare_amount double,extra double,mta_tax double,
+tip_amount int,tolls_amount int,improvement_surcharge double,
+total_amount double)
+row format delimited fields terminated by ','
+location '/common_folder/nyc_taxi_data/'
+tblproperties("skip.header.line.count"="1");
+
+
+--Basic checks
+--row counts,18793081
+select count(*) as full_count from taxi_data; --18793081
+
+select count(*) from taxi_data where vendorid is null; --there are two null values 
+
+--************Perform univariate analysis*************************
+
+--1.Analysing column Vendorid
+select count(Distinct Vendorid) from taxi_data; --2 vendor ids are unique
+select count(*) from taxi_data where vendorid is null; -- 2 null values
+
+--2.Analysing column tpep_pickup_datetime
+select  distinct year(tpep_pickup_datetime) from taxi_data; --table has data for Years - NULL,2001,2003,2008,2009,2041,2017,2018 which seems to be erroneous
+select count(*) from taxi_data where tpep_pickup_datetime between '2017-11-01 00:00:00' and '2017-12-31 23:59:00'; --18792717 rows  are within the range Nov/Dec 2017
+select count(*) from taxi_data where tpep_pickup_datetime not between '2017-11-01 00:00:00' and '2017-12-31 23:59:00'; --362 rows are not within the range
+select count(*) from taxi_data where tpep_pickup_datetime is null; --2 null values
+
+--3.Analysing column tpep_dropoff_datetime
+select count(*) from taxi_data where tpep_dropoff_datetime between '2017-11-01 00:00:00' and '2017-12-31 23:59:00'; --18791067 are within the range Nov/Dec 2017
+select count(*) from taxi_data where tpep_dropoff_datetime not between '2017-11-01  00:00:00' and '2017-12-31 23:59:00'; -- 2012 rows are out of range
+select count(*) from taxi_data where tpep_dropoff_datetime is null; --2 null values
+
+--4.passenger_count
+select passenger_count from taxi_data ;
+select sum(passenger_count) from taxi_data;--30478356 passengers in total served in the entire dataset.
+select round(avg(passenger_count),2) from taxi_data; -- 1.62 passengers served on an average per trip.
+select distinct passenger_count from taxi_data;-- passengers counts seems to be entered as 0,1,2,3,4,5,6,7,8,9,192.There are few erros such as 0,192 
+select count(*) from taxi_data where passenger_count=0;--108970 records have passenger count as zero which is erroneous
+select * from taxi_data where passenger_count=0 limit 10;
+select count(*) from taxi_data where passenger_count = 192;--1 record has an entry for passenger_count as 192 in the passenger counter
+
+--5.trip_distance 
+select max(trip_distance) from taxi_data; --708 ,seems erroneous
+select min(trip_distance) from taxi_data; -- 0 ,seems erroneous
+select count(trip_distance) from taxi_data where trip_distance > 100; --49
+select count(trip_distance) from taxi_data where trip_distance > 50; --777
+select count(trip_distance) from taxi_data where trip_distance > 25; --22063
+select count(trip_distance) from taxi_data where trip_distance > 10; --1058943
+select count(trip_distance) from taxi_data where trip_distance > 5; --2557022
+select count(trip_distance) from taxi_data where trip_distance between 1 and 10; -- 12824087,68% of the dataset
+select count(trip_distance) from taxi_data where trip_distance not between 1 and 10; --32 %
+select percentile_approx(trip_distance,array(0.25,0.50,0.75)) from taxi_data;
+select avg(trip_distance) from taxi_data;--2.86
+
+--6.RatecodeID 
+
+select RatecodeID,count(RatecodeID) from taxi_data group by RatecodeID; -- about 178 records have RatecodeID as 99 which seems invalid
+select * from taxi_data where RatecodeID is null;
+
+--7.store_and_fwd_flag
+
+select store_and_fwd_flag from taxi_data group by store_and_fwd_flag; -- it has two null values ,otherwise looks good
+select * from taxi_data where store_and_fwd_flag is null;
+
+--8.PULocationID 
+
+select PULocationID from taxi_data limit 10;
+select * from taxi_data where PULocationID is null;
+select min(PULocationID) from taxi_data;--1
+select max(PULocationID) from taxi_data;--265
+select * from taxi_data where PULocationID is null;
+
+--9.DOLocationID 
+
+select DOLocationID from taxi_data limit 10;
+select * from taxi_data where DOLocationID is null;
+select min(DOLocationID) from taxi_data;--1
+select max(DOLocationID) from taxi_data;--265
+select * from taxi_data where DOLocationID is null;
+
+--10.payment_type 
+
+select payment_type,count(payment_type) from taxi_data group by payment_type; --only payment types are present such as 1,2,3,4
+select * from taxi_data where payment_type is null;
+
+--11.fare_amount 
+select * from taxi_data where fare_amount is null;
+select min(fare_amount) from taxi_data ;--(-499 )which appears to be erroneous
+select max(fare_amount) from taxi_data ; -- 393221.5 which is very high and gain seems to be erroneous
+select avg(fare_amount) from taxi_data ;-- 13.04 is average fare
+
+select count(*) from taxi_data where fare_amount < 0; -- 9372 records seems to have errorneous fare amount
+
+select count(*) from taxi_data where fare_amount > 10; -- 8409605 records 
+select count(*) from taxi_data where fare_amount > 20; -- 2691221
+select count(*) from taxi_data where fare_amount > 100; --12361
+select count(*) from taxi_data where fare_amount > 1000; -- 9
+select count(*) from taxi_data where fare_amount > 500; -- 49
+select count(*) from taxi_data where fare_amount > 300; -- 341
+select count(*) from taxi_data where fare_amount > 200; --1591
+
+select trip_distance,fare_amount from taxi_data where fare_amount > 300;
+
+
+
+--12.extra
+
+select * from taxi_data where extra is null; -- 2 rows
+select min(extra) from taxi_data; -- (-48.64) seems an erroneous value
+select max(extra) from taxi_data; -- 69.8
+select avg(extra) from taxi_data; -- 0.32
+select stddev_pop(extra) from taxi_data;--0.45
+select variance(extra) from taxi_data;--0.203
+
+--13.mta_tax
+
+select * from taxi_data where mta_tax is null;--2 null rows
+select min(mta_tax) from taxi_data;-- -0.5(errorneous)
+select vendorid from taxi_data where mta_tax < 0 group by vendorid; --vendorid2
+select max(mta_tax) from taxi_data;-- 117.85
+select avg(mta_tax) from taxi_data;--0.497
+select stddev_pop(mta_tax) from taxi_data;
+select count(*) from taxi_data where mta_tax != 0.5 ; --93226
+select count(*) from taxi_data where mta_tax < 0 ;--9092
+
+--14.tip_amount
+select * from taxi_data where tip_amount is null;--2 null rows
+select min(tip_amount) from taxi_data;-- -218
+select max(tip_amount) from taxi_data;-- 496
+select avg(tip_amount) from taxi_data;--1.6
+select stddev_pop(tip_amount) from taxi_data; --2.5
+
+--15.tolls_amount 
+select * from taxi_data where tolls_amount is null;--2 null rows
+select min(tolls_amount) as min_toll_amnt from taxi_data;-- -19
+select max(tolls_amount) as max_toll_amnt from taxi_data;-- 1018
+select avg(tolls_amount) as avg_tollamnt from taxi_data; -- 0.3
+select stddev_pop(tolls_amount) from taxi_data; --1.8
+
+--16.improvement_surcharge 
+select * from taxi_data where improvement_surcharge is null;--2 null rows
+select min(improvement_surcharge) from taxi_data;-- -0.3
+select vendorid from taxi_data where improvement_surcharge < 0 group by vendorid; --vendorid 2 
+select max(improvement_surcharge) from taxi_data;-- 1
+select avg(improvement_surcharge) from taxi_data; --0.3
+select stddev_pop(improvement_surcharge) from taxi_data;--0.01
+
+--17.total_amount  
+select * from taxi_data where total_amount is null;--2 null rows
+select min(total_amount) as min_total_amount from taxi_data;-- -499.3
+select vendorid from taxi_data where total_amount < 0 group by vendorid; --vendorid 2 
+select max(total_amount) from taxi_data;--393222.32
+select vendorid,count(total_amount) from taxi_data where total_amount >5000 group by vendorid; --vendorid 1  seems to have been recording high numbers
+select avg(total_amount) from taxi_data;--16.33
+select stddev_pop(total_amount) from taxi_data;--128.86
+
+
+--*****************************Basic Quality checks***********************************************
+--1.How many records has each TPEP provider provided? Write a query that summarises the number of records of each provider.
+select vendorid,count(vendorid) from taxi_data group by vendorid;
+--vendorid 1 has provided 8447149 records
+--vendorid 2 has provided 10345930 records
+--there are a couple of null records
+
+--2.conclusion on data quality issue 
+--VendorID -- has a couple of null values
+--tpep_pickup_datetime and tpep_dropoff_datetime- has the following NULL,2001,2003,2008,2009,2041,2017,2018 which seems to be erroneous
+--passenger_count - there are values such as 0 and 192 that is erroneous and need tobe removed
+--trip_distance - the min is 0 and max is 708 which is erroneous,hence a suitable range to be chosen
+--RatecodeID - an invalid value i.e 99 seen
+--store_and_fwd_flag - a couple of null values
+--PULocationID  - a couple of null values
+--DOLocationID  - a couple of null values
+--payment_type  - a couple of null values,values present are 1,2,3,4
+--fare_amount-there are outliers such as in negative values and there is a max value ie 393221.5 which is erroneous
+--extra - there are values other than 0,0.5 and 1 ,
+--mta_tax - there are values other than 0.5 and 0 which is erroneous,
+--tip_amount- there are outliers such as negative and tip amount greater than fare amount ,
+--tolls_amount - outliers seen such as negative values,
+--improvement_surcharge - values other than 0.3 seen
+--for further analyses the data will be cleaned based on above analysis
+
+
+--3 Worst performing vendor
+--the analysis is done based on few variable
+--worst vendor based on tpep_pickup_datetime
+select vendorid,count(*) from taxi_data where tpep_pickup_datetime not between '2017-11-01 00:00:00' and '2017-12-31 23:59:00' group by vendorid;
+--vendor1 - 23
+--vendor2 - 339
+
+
+--worst vendor based on passenger_count
+select vendorid,count(*) from taxi_data where passenger_count not in(1,2,3,4,5,6,7,8,9) group by vendorid;
+--vendor1 - 108750
+--vendor2 - 221
+
+--worst vendor based on fare_amount
+select vendorid,count(*) from taxi_data where fare_amount not between 0 and 1000 group by vendorid;
+--vendor1 - 7
+--vendor2 - 9374
+
+--worst vendor based on mta_tax
+select vendorid,count(*) from taxi_data where mta_tax !=0.50 group by vendorid;
+--vendor1 - 44462
+--vendor2 - 48764
+
+--worst vendor based on extra
+select vendorid,count(*) from taxi_data where extra not in (0,0.5,1) group by vendorid;
+--vendor1 - 29536
+--vendor2 - 48724
+
+-- it appears both vendor1 and vendor 2 are performing mistakes.Vendor1 seem to have done more mistakes
+
+
+
+
+
+--***************create a table with partition and orc format*********************************
+
+--create the partitioned table in orc format
+SET hive.exec.max.dynamic.partitions=100000;
+SET hive.exec.max.dynamic.partitions.pernode=100000;
+
+drop table taxi_data_hari_part_orc;
+
+create external table if not exists taxi_data_hari_part_orc(VendorID int,tpep_pickup_datetime string,tpep_dropoff_datetime string,
+passenger_count int,trip_distance double,RatecodeID int,
+store_and_fwd_flag string,PULocationID int,DOLocationID int,payment_type int,
+fare_amount double,extra double,mta_tax double,
+tip_amount int,tolls_amount int,improvement_surcharge double,
+total_amount double) partitioned by (yr int ,mnth int)
+stored as orc location '/user/hive/warehouse/hari_taxi_part_orc'
+tblproperties("orc.compress"="SNAPPY");
+
+
+
+--load data into partitioned orc file
+--the data loaded is clean data, the where clause has the variables that is determined in univariate analysis that needs to be cleaned
+
+insert overwrite table taxi_data_hari_part_orc partition(yr,mnth)
+select VendorID ,tpep_pickup_datetime,tpep_dropoff_datetime ,
+passenger_count ,trip_distance ,RatecodeID ,
+store_and_fwd_flag ,PULocationID ,DOLocationID ,payment_type ,
+fare_amount ,extra ,mta_tax ,
+tip_amount ,tolls_amount ,improvement_surcharge ,
+total_amount,year(tpep_pickup_datetime) as yr,month(tpep_pickup_datetime) as mnth
+from taxi_data where 
+VendorID is not null and
+year(tpep_pickup_datetime)=2017 and month(tpep_pickup_datetime) in(11,12) and
+year(tpep_dropoff_datetime)=2017 and month(tpep_dropoff_datetime) in(11,12) and
+passenger_count between 1 and 9 and
+RatecodeID between 1 and 6 and
+fare_amount > 0 and fare_amount <=1000 and
+extra in(0,0.5,1) and
+mta_tax in (0 ,0.5) and
+tip_amount >= 0 and tip_amount < fare_amount and 
+tolls_amount between 0 and 100 and
+improvement_surcharge in (0,0.3) and
+total_amount > 0 and total_amount <=1000
+;
+
+-- analysing the table taxi_data_hari_part_orc
+
+select count(*) from taxi_data_hari_part_orc; --18577636
+select count(*) from taxi_data_hari_part_orc where yr = 2017 and mnth =11; -- 9182106
+select count(*) from taxi_data_hari_part_orc where yr = 2017 and mnth =12; -- 9395213
+
+
+---**********Running assignment analysis on taxi_data_hari_part_orc************
+
+--************Analysis I*********************
+
+--1.Compare the overall average fare per trip for November and December.
+select mnth,round(avg(fare_amount),2) as overall_avg_fare from taxi_data_hari_part_orc 
+where yr = 2017 and mnth in (11,12) group by mnth ; 
+--Average fare for Nov 12.96
+--Average fare for Dec 12.77
+
+--2.Explore the ‘number of passengers per trip’ - how many trips are made by each level of ‘Passenger_count’? 
+--Do most people travel solo or with other people?
+
+select passenger_count, count(passenger_count) as total from taxi_data_hari_part_orc group by passenger_count order by total desc;
+--Most people travel solo followed by passenger level 2,5,3,6,4,7,8,9
+
+--3.Which is the most preferred mode of payment?
+select payment_type, count(payment_type) as total from taxi_data_hari_part_orc group by payment_type order by total desc;
+--1,2,3,4 is the prefered order.Credit card is the most prefered way followed by cash.
+
+--4.What is the average tip paid per trip? Compare the average tip with the 25th, 50th and 75th percentiles and
+--comment whether the ‘average tip’ is a representative statistic (of the central tendency) of ‘tip amount paid’. 
+--Hint: You may use percentile_approx(DOUBLE col, p): Returns an approximate pth percentile of a numeric column (including floating point types) in the group.
+select round(avg(tip_amount),2) as avg_tip_amount from taxi_data_hari_part_orc; --average tip amount is 1.56
+select percentile_approx(tip_amount,array(0.25,0.50,0.75)) from taxi_data_hari_part_orc; --data at 25th percentile is 0,50th is 1.0,
+  -- 0.75th is 2.0 .It appears average can be  a reprentative statistic for tipe amount.
+
+--5.Explore the ‘Extra’ (charge) variable - what fraction of total trips have an extra charge is levied?
+
+
+select count(*) as no_extra from taxi_data_hari_part_orc where extra =0; --10028041 have NOT paid any extra
+select count(*) as with_extra from taxi_data_hari_part_orc where extra !=0; --8549593 have paid extra
+
+select t.extra , count(t.extra) as extra_count,round(100*(count(t.extra)/u.total)) as perc
+from taxi_data_hari_part_orc t,(select count(*) as total from taxi_data_hari_part_orc)u
+where extra = 0 group by t.extra,u.total; -- 54% have not paid extra
+
+select t.extra , count(t.extra) as extra_count,round(100*(count(t.extra)/u.total)) as perc
+from taxi_data_hari_part_orc t,(select count(*) as total from taxi_data_hari_part_orc)u
+where extra > 0 group by t.extra,u.total; -- 46% have paid extra 
+
+
+--***********************Analysis II**********************************
+
+--1.What is the correlation between the number of passengers on any given trip, and the tip paid per trip? 
+--Do multiple travellers tip more compared to solo travellers? Hint: Use CORR(Col_1, Col_2)
+select corr(passenger_count,tip_amount) as corr_pass_tip from taxi_data_hari_part_orc ; -- -0.004
+---there is no much correlation between passenger_count and tip_amount 
+
+
+--2.Segregate the data into five segments of ‘tip paid’: [0-5), [5-10), [10-15) , [15-20) and >=20. 
+--Calculate the percentage share of each bucket (i.e. the fraction of trips falling in each bucket).
+
+select tip_amount_Bucket, count(*)as trips_bucket, max(records_count)as total_trips, 
+round(count(*)/max(records_count),4)*100 as tip_bucket_distribution
+from (select in_buc.*, count(*) over () records_count,
+	case when tip_amount >= 0 and tip_amount <5 then 'Buck_0to5' 
+	when tip_amount >=5 and tip_amount < 10 then 'Buck_5to10'
+	when tip_amount >=10 and tip_amount < 15 then 'Buck_10to15'
+	when tip_amount >=15 and tip_amount < 20 then 'Buck_15to20'
+	else 'Buck_above20' 
+	end as tip_amount_Bucket 
+    from taxi_data_hari_part_orc in_buc)as seg_table
+group by tip_amount_Bucket
+order by tip_bucket_distribution desc;
+
+
+--3.Which month has a greater average ‘speed’ - November or December? 
+--Note that the variable ‘speed’ will have to be derived from other metrics. Hint: You have columns for distance and time.
+--the unixtime difference is obtained in seconds,it is converted into hours by dividing it by 3600 seconds
+
+select round(avg(case when yr=2017 and mnth=11 
+then (trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) 
+else null end),3)as nov_avg_speed_mph, 
+round(avg(CASE when yr=2017 and mnth=12 THEN (trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) 
+else null end),3)as dec_avg_speed_mph
+from taxi_data_hari_part_orc;
+
+--nov_avg_speed_mph - 12.532
+--dec_avg_speed_mph - 12.483
+--November avegrage speed is slighlty December average speed
+
+
+--4.Analyse the average speed of the most happening days of the year, i.e. 31st December (New year’s eve) and 25th December 
+--(Christmas Eve) and compare it with the overall average. 
+
+select round(avg(case when mnth=12 and day(tpep_pickup_datetime)=25 
+then (trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) 
+else null end),3)as christ_eve_avg_speed_mph, round(avg(case when mnth=12 and day(tpep_pickup_datetime)=31 
+then (trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) 
+else null end),3)as new_year_eve_avg_speed_mph, round(avg(case when mnth in (11,12) 
+then (trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))/3600)) 
+else null end),3)as overall_avg_speed_mph
+from taxi_data_hari_part_orc;
+
+--overall_avg_speed_mph - 12.507
+--christ_eve_avg_speed_mph - 16.654
+--new_year_eve_avg_speed_mph - 13.939
+--Christmas Eve has better average speed compared to overall average and new year eve
+
+--*********************END*****************************
+
+
